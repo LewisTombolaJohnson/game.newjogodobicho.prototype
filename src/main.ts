@@ -75,7 +75,8 @@ async function initApp() {
   // Scale whole stage down by 15% and center it
   const SCALE = 0.85
   app.stage.scale.set(SCALE)
-  app.stage.position.set((WIDTH - WIDTH * SCALE) / 2, (HEIGHT - HEIGHT * SCALE) / 2)
+  // Center horizontally, align to top vertically
+  app.stage.position.set((WIDTH - WIDTH * SCALE) / 2, 0)
   // Ensure the container is empty before appending canvas (avoid duplicates)
   while (root.firstChild) {
     root.removeChild(root.firstChild)
