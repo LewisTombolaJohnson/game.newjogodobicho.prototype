@@ -534,8 +534,9 @@ function drawTicketsArea() {
         winLabel.y = y + 6
         ticketsContainer.addChild(winLabel)
       }
-      // Add a per-ticket delete (close) button during selection state (hidden during gameplay)
-      if (!autoDrawActive) {
+      // Add a per-ticket delete (close) button during selection state on confirmed tickets only
+      // Hide this while building a ticket (i.e., unconfirmed with animals)
+      if (!autoDrawActive && ticket.confirmed) {
         const delRadius = 10
         const delX = WIDTH - 16 - delRadius
         const delY = y + 6 + delRadius
