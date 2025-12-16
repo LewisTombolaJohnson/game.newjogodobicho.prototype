@@ -184,6 +184,21 @@ function drawHeader() {
   prompt.x = WIDTH / 2 - prompt.width / 2
   ui.addChild(prompt)
 
+  // Top-right help button '?' linking to Rules PDF
+  const helpBtnSize = 30
+  const helpBtn = makeButton('?', WIDTH - helpBtnSize - 12, 12, helpBtnSize, helpBtnSize, () => {
+    window.open('https://global-uploads.webflow.com/63b3249466615535f76d4b4e/63ee65cb72f26dc150c03317_Rules-Jogo-Do-Bicho.pdf', '_blank')
+  }, { fontSize: 20 })
+  ui.addChild(helpBtn)
+
+  // Top-left bonus trigger 'B' to start bonus round immediately
+  const bonusBtnSize = 30
+  const bonusBtn = makeButton('B', 12, 12, bonusBtnSize, bonusBtnSize, () => {
+    // Trigger base bonus round instantly; award totalMultiplier × £1.00
+    showBonusGridRoundAndAward(0.5, 25.0, 5, 1.0)
+  }, { fontSize: 20 })
+  ui.addChild(bonusBtn)
+
   if (message) {
     const msg = makeText(message)
     msg.x = 16; msg.y = 520
@@ -506,13 +521,41 @@ function drawTicketsArea() {
       const label = makeText(`Ticket ${t + 1}${stakeSuffix}`, { fontSize: 14, fill: ticket.confirmed ? ACCENT : TEXT_COLOR })
       label.x = 16; label.y = y + 6
       ticketsContainer.addChild(label)
-      // Per-ticket running win label on the right
-      if (ticket.confirmed) {
+      // Per-ticket running win label on the right (show only during gameplay)
+      if (autoDrawActive && ticket.confirmed) {
         const win = Math.max(0, ticket.win || 0)
         const winLabel = makeText(`£${win.toFixed(2)}`, { fontSize: 14, fill: win > 0 ? ACCENT : 0x9aa1a8 })
         winLabel.x = WIDTH - 16 - winLabel.width
         winLabel.y = y + 6
         ticketsContainer.addChild(winLabel)
+      }
+      // Add a per-ticket delete (close) button during selection state (hidden during gameplay)
+      if (!autoDrawActive) {
+        const delRadius = 10
+        const delX = WIDTH - 16 - delRadius
+        const delY = y + 6 + delRadius
+        const delBtn = new Graphics()
+        delBtn.beginFill(0xc62828)
+        delBtn.drawCircle(delX, delY, delRadius)
+        delBtn.endFill()
+        delBtn.eventMode = 'static'
+        delBtn.cursor = 'pointer'
+        delBtn.on('pointertap', () => {
+          // Delete this ticket
+          tickets.splice(t, 1)
+          // Ensure there's always at least one empty ticket at the top
+          const hasEmptyTop = tickets[0] && !tickets[0].confirmed && tickets[0].animals.length === 0
+          if (!hasEmptyTop) {
+            tickets.splice(0, 0, { animals: [], confirmed: false, stake: undefined, win: 0 })
+          }
+          drawTicketsArea()
+          drawCabinet()
+        })
+        ticketsContainer.addChild(delBtn)
+        const delTxt = makeText('×', { fontSize: 14, fill: 0xffffff })
+        delTxt.x = delX - delTxt.width / 2
+        delTxt.y = delY - delTxt.height / 2
+        ticketsContainer.addChild(delTxt)
       }
     }
 
@@ -520,7 +563,17 @@ function drawTicketsArea() {
     // Center the 5 slots horizontally within the ticket width
     const totalSlotsWidth = (slotSize * 5) + (slotPad * 4)
     let x = Math.max(12, (WIDTH - totalSlotsWidth) / 2)
+    // If this is an empty ticket and we are showing stake limit messaging, skip drawing the slots
+    const totalConfirmedStakeForSlots = tickets.reduce((sum, tt) => sum + ((tt.confirmed && tt.stake) ? tt.stake : 0), 0)
+    const currentStakeSelForSlots = STAKES[selectedStakeIndex]
+    const atLimitForSlots = (!ticket.confirmed && ticket.animals.length === 0) && totalConfirmedStakeForSlots >= 10.0
+    const wouldExceedForSlots = (!ticket.confirmed && ticket.animals.length === 0) && !atLimitForSlots && (totalConfirmedStakeForSlots + currentStakeSelForSlots > 10.0)
+    const hideSlotsForEmptyLimit = atLimitForSlots || wouldExceedForSlots
     for (let s = 0; s < 5; s++) {
+      if (hideSlotsForEmptyLimit) {
+        // Skip rendering individual slots when limit messaging is active
+        break
+      }
       const idx = ticket.animals[s]
       const emoji = idx !== undefined ? (ANIMAL_EMOJI[ANIMALS[idx]] ?? '❓') : '—'
       const slot = new Graphics()
@@ -580,8 +633,24 @@ function drawTicketsArea() {
       x += slotSize + slotPad
     }
 
-    // For empty tickets (no animals yet), show utility round buttons: clear confirmed (left) and build random (right)
+    // For empty tickets (no animals yet), enforce stake limit messaging and optionally show utility buttons
     if (!ticket.confirmed && ticket.animals.length === 0) {
+      const totalConfirmedStake = tickets.reduce((sum, tt) => sum + ((tt.confirmed && tt.stake) ? tt.stake : 0), 0)
+      const currentStakeSel = STAKES[selectedStakeIndex]
+      const atLimit = totalConfirmedStake >= 10.0
+      const wouldExceed = !atLimit && (totalConfirmedStake + currentStakeSel > 10.0)
+
+      if (atLimit || wouldExceed) {
+        // Hide the slot contents and show the appropriate message centered within the ticket rectangle
+        const msg = atLimit
+          ? 'Stake limit of £10 reached.'
+          : 'Current stake selected will take you over the £10 limit.'
+        const msgText = makeText(msg, { fontSize: 16, fill: ACCENT })
+        msgText.x = WIDTH / 2 - msgText.width / 2
+        msgText.y = y + slotSize / 2 - msgText.height / 2
+        ticketsContainer.addChild(msgText)
+        // Skip drawing the Clear/Random controls when at/over limit
+      } else {
       const radius = 18 // 50% larger than 12
       const centerY = y + slotSize / 2
   let leftX = 16 + radius // near left padding
@@ -626,6 +695,7 @@ function drawTicketsArea() {
   randomLabel.x = rightX - randomLabel.width / 2
       randomLabel.y = centerY - randomLabel.height / 2
       ticketsContainer.addChild(randomLabel)
+      }
     }
 
     // Hide icons if confirmed; otherwise show Cancel (✕) and Confirm (✓)
@@ -646,8 +716,17 @@ function drawTicketsArea() {
       confirmIcon.eventMode = 'static'; confirmIcon.cursor = 'pointer'
         confirmIcon.on('pointertap', () => {
           if (!ticket.confirmed && ticket.animals.length > 0) {
+            // Enforce £10 total stake limit before confirming
+            const totalConfirmedStake = tickets.reduce((sum, tt) => sum + ((tt.confirmed && tt.stake) ? tt.stake : 0), 0)
+            const selStake = STAKES[selectedStakeIndex]
+            if (totalConfirmedStake + selStake > 10.0) {
+              // Do not confirm; rely on empty ticket warning UI
+              drawTicketsArea()
+              drawCabinet()
+              return
+            }
             ticket.confirmed = true
-            ticket.stake = STAKES[selectedStakeIndex]
+            ticket.stake = selStake
             // Remove from original position and insert just below
             const originalIndex = t
             const [removed] = tickets.splice(originalIndex, 1)
@@ -723,8 +802,10 @@ function buildRandomTicketAt(index: number) {
   const ticket = tickets[index]
   if (!ticket || ticket.confirmed) return
   // Choose k animals at random (1..5), unique
-  const k = 1 + Math.floor(Math.random() * 5)
-  const indices = [...Array(ANIMALS.length).keys()]
+  const remainingSlots = Math.max(0, 5 - ticket.animals.length)
+  if (remainingSlots === 0) return
+  const k = Math.min(remainingSlots, 1 + Math.floor(Math.random() * 5))
+  const indices = [...Array(ANIMALS.length).keys()].filter(i => !ticket.animals.includes(i))
   // shuffle
   for (let i = indices.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
@@ -736,14 +817,24 @@ function buildRandomTicketAt(index: number) {
   const originalIndex = index
   for (const idx of picks) {
     // place in ticket animals to set destination calculation (length-1)
-    ticket.animals.push(idx)
+    if (!ticket.animals.includes(idx) && ticket.animals.length < 5) {
+      ticket.animals.push(idx)
+    }
     const emoji = ANIMAL_EMOJI[ANIMALS[idx]] ?? '❓'
     animateAnimalToTicket(emoji, idx, originalIndex, () => {
       arrivals++
       // After last arrival, confirm and reposition just below
     if (arrivals === picks.length && !ticket.confirmed) {
+  // Enforce £10 total stake limit before confirming
+  const totalConfirmedStake = tickets.reduce((sum, tt) => sum + ((tt.confirmed && tt.stake) ? tt.stake : 0), 0)
+  const selStake = STAKES[selectedStakeIndex]
+  if (totalConfirmedStake + selStake > 10.0) {
+    drawTicketsArea()
+    drawCabinet()
+    return
+  }
   ticket.confirmed = true
-  ticket.stake = STAKES[selectedStakeIndex]
+  ticket.stake = selStake
   // Remove original and then insert empty first, followed by confirmed just below
   const [removed] = tickets.splice(originalIndex, 1)
   // Insert new empty ticket at original index
@@ -951,6 +1042,8 @@ async function startAutoDraw() {
   autoDrawActive = false
   // Animate tickets area back to original size
   animateTicketsTopLift(0)
+  // Apply a final sort by win so highest prizes remain at the top
+  sortTicketsByCurrentWin()
   // Ensure an empty ticket is available at the top when returning to selection
   tickets.splice(0, 0, { animals: [], confirmed: false, stake: undefined, win: 0 })
   // Finalize prizes based on the completed draw (running wins already reflect totals)
@@ -965,16 +1058,17 @@ async function startAutoDraw() {
   // After all calls have been made, show bonus popup once if eligible
   // If all five reveals are bonus, award Top Prize = 500x total confirmed stakes
   const allFiveBonus = topDrawBonusFlags.length === 5 && topDrawBonusFlags.every(Boolean)
-  if (allFiveBonus) {
-    const totalConfirmedStakes = tickets.reduce((sum, t) => sum + ((t.confirmed && t.stake) ? t.stake : 0), 0)
-    const topPrize = totalConfirmedStakes * 500
-    prizeAmount += topPrize
-    balance += topPrize
-    drawCabinet()
-    await showTopPrizePopup(topPrize)
+  const bonusCount = topDrawBonusFlags.filter(Boolean).length
+  if (bonusCount >= 4) {
+    // Tiered bonus round ranges per request
+    if (bonusCount === 5) {
+      await showBonusGridRoundAndAward(5.0, 100.0, 5)
+    } else {
+      await showBonusGridRoundAndAward(2.0, 50.0, 5)
+    }
   } else if (bonusEligibleThisRound) {
-    // Show the full bonus grid round
-    await showBonusGridRoundAndAward()
+    // Base bonus round for 3+ bonus symbols
+    await showBonusGridRoundAndAward(0.5, 25.0, 5)
   }
 }
 
@@ -1092,6 +1186,10 @@ function updateRunningWins() {
         break
     }
     t.win = stake * multiplier
+  }
+  // During auto play, sort tickets by current win descending (top to bottom)
+  if (autoDrawActive) {
+    sortTicketsByCurrentWin()
   }
   // Refresh tickets to show ticks and running totals
   drawTicketsArea()
@@ -1320,7 +1418,7 @@ function showTopPrizePopup(amount: number): Promise<void> {
 }
 
 // Bonus round: hidden 5x5 grid with random multipliers; player gets 5 picks, then award total
-function showBonusGridRoundAndAward(): Promise<void> {
+function showBonusGridRoundAndAward(minMultiplier = 0.5, maxMultiplier = 25.0, picks = 5, stakeOverrideAmount?: number): Promise<void> {
   return new Promise((resolve) => {
     modalUI.removeChildren()
     // Backdrop with fade-in
@@ -1346,12 +1444,12 @@ function showBonusGridRoundAndAward(): Promise<void> {
     panelBg.drawRoundedRect(panelX, panelY, panelW, panelH, 12)
     panel.addChild(panelBg)
 
-    const title = makeText('Bonus Round', { fontSize: 22, fill: ACCENT })
+  const title = makeText('Bonus Round', { fontSize: 22, fill: ACCENT })
     title.x = panelX + panelW / 2 - title.width / 2
     title.y = panelY + 12
     panel.addChild(title)
 
-    const info = makeText('Pick 5 tiles to reveal multipliers!', { fontSize: 16, fill: 0xcccccc })
+  const info = makeText(`Pick ${picks} tiles!`, { fontSize: 16, fill: 0xcccccc })
     info.x = panelX + panelW / 2 - info.width / 2
     info.y = title.y + title.height + 6
     panel.addChild(info)
@@ -1365,13 +1463,15 @@ function showBonusGridRoundAndAward(): Promise<void> {
     const startX = panelX + 12
     const startY = info.y + info.height + 12
 
-    // Generate random multipliers in range [0.5x .. 25.0x], one decimal precision
+    // Generate random multipliers in provided range as whole integers
+    const minInt = Math.ceil(minMultiplier)
+    const maxInt = Math.floor(maxMultiplier)
     const multipliers: number[] = Array(rows * cols).fill(0).map(() => {
-      const raw = 0.5 + Math.random() * (25.0 - 0.5)
-      return Math.round(raw * 10) / 10 // one decimal
+      const raw = minInt + Math.random() * (maxInt - minInt)
+      return Math.round(raw)
     })
     const revealed: boolean[] = Array(rows * cols).fill(false)
-    let picksLeft = 5
+  let picksLeft = picks
     let totalMultiplier = 0
 
     const picksLabel = makeText(`Picks: ${picksLeft}`, { fontSize: 16, fill: 0xffffff })
@@ -1379,7 +1479,7 @@ function showBonusGridRoundAndAward(): Promise<void> {
     picksLabel.y = panelY + panelH - 40
     panel.addChild(picksLabel)
 
-    const totalLabel = makeText(`Total: ${totalMultiplier}x`, { fontSize: 16, fill: 0xffffff })
+  const totalLabel = makeText(`Total: ${Math.round(totalMultiplier)}x`, { fontSize: 16, fill: 0xffffff })
     totalLabel.x = panelX + panelW - totalLabel.width - 16
     totalLabel.y = panelY + panelH - 40
     panel.addChild(totalLabel)
@@ -1416,20 +1516,22 @@ function showBonusGridRoundAndAward(): Promise<void> {
           txt.x = x + tileSize / 2 - txt.width / 2
           txt.y = y + tileSize / 2 - txt.height / 2 - 8
           panel.addChild(txt)
-          const multText = makeText(`${mult.toFixed(1)}x`, { fontSize: 16, fill: 0xfff176 })
+          const multText = makeText(`${Math.round(mult)}x`, { fontSize: 16, fill: 0xfff176 })
           multText.x = x + tileSize / 2 - multText.width / 2
           multText.y = y + tileSize - multText.height - 6
           panel.addChild(multText)
 
           // Update labels
           picksLabel.text = `Picks: ${picksLeft}`
-          totalLabel.text = `Total: ${totalMultiplier}x`
+          totalLabel.text = `Total: ${Math.round(totalMultiplier)}x`
           totalLabel.x = panelX + panelW - totalLabel.width - 16
 
           // If done, award
           if (picksLeft === 0) {
             // Award prize = totalMultiplier * total confirmed stakes
-            const totalConfirmedStakes = tickets.reduce((sum, t) => sum + ((t.confirmed && t.stake) ? t.stake : 0), 0)
+            const totalConfirmedStakes = (typeof stakeOverrideAmount === 'number')
+              ? stakeOverrideAmount
+              : tickets.reduce((sum, t) => sum + ((t.confirmed && t.stake) ? t.stake : 0), 0)
             const bonusPrize = totalConfirmedStakes * totalMultiplier
             prizeAmount += bonusPrize
             balance += bonusPrize
@@ -1538,11 +1640,15 @@ function drawCabinet() {
   // stake buttons positioned around center (minus/plus adjusted separately)
   const minusBtn = makeRoundButton('−', controlsCenterX - 45, controlsCenterY, 16, () => {
     selectedStakeIndex = Math.max(0, selectedStakeIndex - 1)
+    // Redraw both cabinet and tickets to reflect stake-limit messages on empty ticket
     drawCabinet()
+    drawTicketsArea()
   })
   const plusBtn = makeRoundButton('+', controlsCenterX + 45, controlsCenterY, 16, () => {
     selectedStakeIndex = Math.min(STAKES.length - 1, selectedStakeIndex + 1)
+    // Redraw both cabinet and tickets to reflect stake-limit messages on empty ticket
     drawCabinet()
+    drawTicketsArea()
   })
   cabinetUI.addChild(minusBtn)
   cabinetUI.addChild(plusBtn)
@@ -1624,3 +1730,23 @@ let needsNewTicket = false
 
 // Initialize application
 initApp()
+
+function sortTicketsByCurrentWin() {
+  if (tickets.length === 0) return
+  const empties = [] as Ticket[]
+  const nonEmpties = [] as Ticket[]
+  for (const t of tickets) {
+    if (!t.confirmed && t.animals.length === 0) empties.push(t)
+    else nonEmpties.push(t)
+  }
+  nonEmpties.sort((a, b) => {
+    const winDiff = (b.win || 0) - (a.win || 0)
+    if (winDiff !== 0) return winDiff
+    const stakeDiff = ((b.stake || 0) - (a.stake || 0))
+    if (stakeDiff !== 0) return stakeDiff
+    return b.animals.length - a.animals.length
+  })
+  tickets.length = 0
+  for (const t of empties) tickets.push(t)
+  for (const t of nonEmpties) tickets.push(t)
+}
