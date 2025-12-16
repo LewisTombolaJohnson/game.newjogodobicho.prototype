@@ -72,6 +72,10 @@ async function initApp() {
   const canvas = app.canvas as HTMLCanvasElement
   // Enable zIndex sorting to control layering
   app.stage.sortableChildren = true
+  // Scale whole stage down by 15% and center it
+  const SCALE = 0.85
+  app.stage.scale.set(SCALE)
+  app.stage.position.set((WIDTH - WIDTH * SCALE) / 2, (HEIGHT - HEIGHT * SCALE) / 2)
   // Ensure the container is empty before appending canvas (avoid duplicates)
   while (root.firstChild) {
     root.removeChild(root.firstChild)
