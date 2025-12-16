@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UK Jogo do Bicho (PixiJS + TypeScript)</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #14181C; }
+      #app { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 12px; }
+      canvas { border: 2px solid #ffb648; border-radius: 8px; }
+      .controls { width: 450px; color: #eee; font-family: Arial, sans-serif; margin-top: 12px; }
+      .controls input { width: 180px; padding: 8px; border-radius: 6px; border: 1px solid #ffb648; background: #2a2e32; color: #fff; }
+      .controls button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ffb648; background: #2a2e32; color: #fff; margin-left: 8px; cursor: pointer; }
+      .controls button:hover { background: #3a3e42; }
+      .error { color: #ff5f5f; margin-top: 6px; min-height: 20px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-root"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
