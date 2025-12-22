@@ -9,6 +9,9 @@ const ACCENT = 0xffb648
 const BUTTON_BG = 0x2a2e32
 const BUTTON_HOVER = 0x34383c
 let pendingNewTicketIndex: number | null = null
+// Jackpot state
+const JACKPOT_RATE = 0.01 // 1% of total stakes per round added to jackpot
+let jackpotAmount = 1000 // Start jackpot at £1000
 
 // Animals list and corresponding emoji (approximate matches)
 const ANIMALS = [
@@ -100,6 +103,11 @@ async function initApp() {
   app.stage.addChild(overlay)
   app.stage.addChild(cabinetUI)
   app.stage.addChild(topDrawContainer)
+  // Attach layered children so header redraws don't wipe emojis
+  headerLayer.zIndex = 0
+  callsLayer.zIndex = 1
+  topDrawContainer.addChild(headerLayer)
+  topDrawContainer.addChild(callsLayer)
   // Modal container above everything
   modalUI.zIndex = 100
   app.stage.addChild(modalUI)
@@ -147,6 +155,8 @@ let ticketsTopLift = 0
 let autoDrawActive = false
 let topDrawResults: number[] = []
 const topDrawContainer = new Container()
+const headerLayer = new Container()
+const callsLayer = new Container()
 let topDrawInitialized = false
 // Aggregate prize (in pounds) after a draw
 let prizeAmount = 0
@@ -183,12 +193,6 @@ function drawHeader() {
   title.y = 16
   ui.addChild(title)
 
-  // Balance will be displayed in the cabinet; show a hint here
-  const prompt = makeText('Select up to 5 animals per ticket!', { fontSize: 18, fill: ACCENT })
-  prompt.y = 56
-  prompt.x = WIDTH / 2 - prompt.width / 2
-  ui.addChild(prompt)
-
   // Top-right help button '?' linking to Rules PDF
   const helpBtnSize = 30
   const helpBtn = makeButton('?', WIDTH - helpBtnSize - 12, 12, helpBtnSize, helpBtnSize, () => {
@@ -196,13 +200,12 @@ function drawHeader() {
   }, { fontSize: 20 })
   ui.addChild(helpBtn)
 
-  // Top-left bonus trigger 'B' to start bonus round immediately
-  const bonusBtnSize = 30
-  const bonusBtn = makeButton('B', 12, 12, bonusBtnSize, bonusBtnSize, () => {
-    // Trigger base bonus round instantly; award totalMultiplier × £1.00
-    showBonusGridRoundAndAward(0.5, 25.0, 5, 1.0)
+  // Top-left jackpot trigger 'J' (debug/test) to award current jackpot immediately
+  const jackpotBtnSize = 30
+  const jackpotBtn = makeButton('J', 12, 12, jackpotBtnSize, jackpotBtnSize, () => {
+    triggerJackpotWin()
   }, { fontSize: 20 })
-  ui.addChild(bonusBtn)
+  ui.addChild(jackpotBtn)
 
   if (message) {
     const msg = makeText(message)
@@ -216,33 +219,53 @@ function drawHeader() {
     ui.addChild(drawn)
   }
 
-  // Top draw results UI: show 5 boxes along the top when auto drawing
-  if (autoDrawActive) {
-    // Initialize boxes once at the start to avoid wiping previously revealed emojis
-    if (!topDrawInitialized) {
-      topDrawContainer.removeChildren()
-      const cols = 5; const rows = 5
-      const pad = 6
-      const startY = 96
-      const availableWidth = WIDTH - 16*2 - (cols - 1) * pad
-      const ticketsViewportHeight = 165
-      const availableHeight = (HEIGHT - CABINET_H - ticketsViewportHeight) - startY - (rows - 1) * pad
-      const boxSize = Math.floor(Math.min(availableWidth / cols, availableHeight / rows))
-      const y = startY
-      for (let i = 0; i < 5; i++) {
-        const x = 16 + i * (boxSize + pad)
-        const box = new Graphics()
-        box.beginFill(0x2a2e32)
-        box.drawRoundedRect(x, y, boxSize, boxSize, 8)
-        box.endFill()
-        topDrawContainer.addChild(box)
-      }
-      topDrawInitialized = true
-    }
-    // Do not clear or redraw emojis here; fade-in helper manages them
-  } else {
-    topDrawContainer.removeChildren()
-    topDrawInitialized = false
+  // Jackpot UI: single 'Jackpot' box inline where the old jackpot text was
+  headerLayer.removeChildren()
+  const pad = 8
+  const startY = 56
+  const availableWidth = WIDTH - 16*2
+  const boxW = availableWidth
+  const boxH = 30
+  // Always unlocked; engine handles triggering
+  const unlocked = true
+  const x = 16
+  const y = startY
+  const box = new Graphics()
+  const fill = unlocked ? 0x2a2e32 : 0x1b1f23
+  const borderAlpha = unlocked ? 1.0 : 0.5
+  const accentColor = 0xffd54f
+  box.beginFill(fill)
+  box.drawRoundedRect(x, y, boxW, boxH, 8)
+  box.endFill()
+  box.lineStyle(2, accentColor, borderAlpha)
+  box.drawRoundedRect(x, y, boxW, boxH, 8)
+  headerLayer.addChild(box)
+  // Single-line: label 'Jackpot' on left, full amount on right
+  const nameTxt = makeText('Jackpot', { fontSize: 12, fill: accentColor })
+  nameTxt.x = x + 8
+  nameTxt.y = y + boxH / 2 - nameTxt.height / 2
+  headerLayer.addChild(nameTxt)
+  const amt = makeText(`£${jackpotAmount.toFixed(2)}`, { fontSize: 12, fill: 0xffffff })
+  amt.x = x + boxW - 8 - amt.width
+  amt.y = y + boxH / 2 - amt.height / 2
+  headerLayer.addChild(amt)
+
+  // Slim calls row: 5 small boxes beneath Jackpot bar for reveal emojis
+  const callsPad = 6
+  const callsY = startY + boxH + 6
+  const callsCols = 5
+  const callsAvailableWidth = WIDTH - 16*2 - (callsCols - 1) * callsPad
+  const callsBoxSize = Math.floor(callsAvailableWidth / callsCols)
+  for (let i = 0; i < 5; i++) {
+    const cx = 16 + i * (callsBoxSize + callsPad)
+    const cy = callsY
+    const box = new Graphics()
+    box.beginFill(0x2a2e32)
+    box.drawRoundedRect(cx, cy, callsBoxSize, callsBoxSize, 6)
+  box.endFill()
+  headerLayer.addChild(box)
+  topDrawContainer.addChild(headerLayer)
+  topDrawContainer.addChild(callsLayer)
   }
 }
 
@@ -970,11 +993,8 @@ async function startAutoDraw() {
   // Reset reveal counter and per-ticket running wins
   revealCount = 0
   topDrawBonusFlags = []
-  consecutiveBonusCount = 0
-  bonusCountThisRound = 0
-  bonusEligibleThisRound = false
-  // Roll for a forced triple-bonus round (10% chance per round)
-  forceTripleBonusRound = Math.random() < 0.10
+  // Clear previous call emojis so new reveals are visible
+  callsLayer.removeChildren()
   for (const t of tickets) {
     t.win = 0
   }
@@ -998,9 +1018,18 @@ async function startAutoDraw() {
   if (totalStake > 0) {
     balance -= totalStake
   }
+  // Accumulate a portion of total stakes into the jackpot pool
+  if (totalStake > 0) {
+    jackpotAmount += totalStake * JACKPOT_RATE
+  }
+  // Simulate other players contributing at round start
+  // Add a random burst: between £0.50 and £5.00
+  const otherPlayersBurst = 0.5 + Math.random() * 4.5
+  jackpotAmount += otherPlayersBurst
   // Reset prize display to zero at the start of the draw
   prizeAmount = 0
   drawCabinet()
+  drawHeader() // update jackpot counter and header UI
   // Reset scroll to top
   ticketsScrollY = 0
   // Animate tickets viewport top lift to 400px
@@ -1018,29 +1047,22 @@ async function startAutoDraw() {
     } while (picked.has(idx))
     picked.add(idx)
   topDrawResults[i] = idx
-  // Determine bonus: force first 3 as bonus when active, else 30% chance
-  const isBonus = (forceTripleBonusRound && i < 3) ? true : (Math.random() < 0.30)
+  // Determine rare bonus glow for this reveal (~1.1%–1.3% chance)
+  const bonusChance = 0.011 + Math.random() * 0.002
+  const isBonus = Math.random() < bonusChance
   topDrawBonusFlags[i] = isBonus
-  drawHeader() // update boxes with new emoji
-  // Fade in the emoji in the specific box for visual clarity
+  drawHeader() // update header so calls row exists
+  // Fade in the emoji in the slim calls row for visual clarity
   fadeInTopBoxEmoji(i, idx, isBonus)
-    // Increment reveal count and update per-ticket running wins
+  // Simulate other players small trickle contributions each reveal (0–£0.50)
+  jackpotAmount += Math.random() * 0.5
+  drawHeader() // reflect trickle
+  // Increment reveal count and update per-ticket running wins
     revealCount = i + 1
     updateRunningWins()
     // Update cabinet prize to show current total win so far
     prizeAmount = tickets.reduce((sum, t) => sum + (t.win || 0), 0)
     drawCabinet()
-    // Track consecutive bonus reveals; mark for popup if 3 in a row (deferred until round end)
-    if (isBonus) {
-      consecutiveBonusCount++
-      bonusCountThisRound++
-    } else {
-      consecutiveBonusCount = 0
-    }
-    // Eligibility: any 3 or more bonus symbols across the 5 reveals
-    if (bonusCountThisRound >= 3) {
-      bonusEligibleThisRound = true
-    }
     // wait 2 seconds
     await new Promise((res) => setTimeout(res, 2000))
   }
@@ -1061,21 +1083,6 @@ async function startAutoDraw() {
   drawAnimals()
   drawTicketsArea()
   drawCabinet()
-  // After all calls have been made, show bonus popup once if eligible
-  // If all five reveals are bonus, award Top Prize = 500x total confirmed stakes
-  const allFiveBonus = topDrawBonusFlags.length === 5 && topDrawBonusFlags.every(Boolean)
-  const bonusCount = topDrawBonusFlags.filter(Boolean).length
-  if (bonusCount >= 4) {
-    // Tiered bonus round ranges per request
-    if (bonusCount === 5) {
-      await showBonusGridRoundAndAward(5.0, 100.0, 5)
-    } else {
-      await showBonusGridRoundAndAward(2.0, 50.0, 5)
-    }
-  } else if (bonusEligibleThisRound) {
-    // Base bonus round for 3+ bonus symbols
-    await showBonusGridRoundAndAward(0.5, 25.0, 5)
-  }
 }
 
 // Compute total prizes for all confirmed tickets based on topDrawResults
@@ -1224,16 +1231,15 @@ function animateTicketsTopLift(target: number) {
 
 // Helper: fade in text at the position of the i-th top box
 function fadeInTopBoxEmoji(i: number, idx: number, bonusGlow = false) {
-  // Match grid geometry for first row
-  const cols = 5; const rows = 5
+  // Target the slim calls row under the Jackpot bar
+  const cols = 5
   const pad = 6
-  const startY = 96
+  const jackpotBarH = 30
+  const callsStartY = 56 + jackpotBarH + 6
   const availableWidth = WIDTH - 16*2 - (cols - 1) * pad
-  const ticketsViewportHeight = 165
-  const availableHeight = (HEIGHT - CABINET_H - ticketsViewportHeight) - startY - (rows - 1) * pad
-  const boxSize = Math.floor(Math.min(availableWidth / cols, availableHeight / rows))
+  const boxSize = Math.floor(availableWidth / cols)
   const x = 16 + i * (boxSize + pad)
-  const y = startY
+  const y = callsStartY
   const emoji = ANIMAL_EMOJI[ANIMALS[idx]] ?? '❓'
   // Optional golden glow behind the emoji (faded orange-yellow)
   let glow: Container | null = null
@@ -1255,14 +1261,14 @@ function fadeInTopBoxEmoji(i: number, idx: number, bonusGlow = false) {
     inner.endFill()
     glow.addChild(outer)
     glow.addChild(inner)
-    glow.alpha = 0
-    topDrawContainer.addChild(glow)
+  glow.alpha = 0
+  callsLayer.addChild(glow)
   }
   const txt = makeText(emoji, { fontSize: Math.floor(boxSize * 0.7) })
   txt.x = x + boxSize / 2 - txt.width / 2
   txt.y = y + boxSize / 2 - txt.height / 2
   txt.alpha = 0
-  topDrawContainer.addChild(txt)
+  callsLayer.addChild(txt)
   // Animate alpha to 1 over ~0.3s
   let elapsed = 0
   const duration = 0.3
@@ -1648,12 +1654,14 @@ function drawCabinet() {
     selectedStakeIndex = Math.max(0, selectedStakeIndex - 1)
     // Redraw both cabinet and tickets to reflect stake-limit messages on empty ticket
     drawCabinet()
+    drawHeader() // refresh jackpot tier locks
     drawTicketsArea()
   })
   const plusBtn = makeRoundButton('+', controlsCenterX + 45, controlsCenterY, 16, () => {
     selectedStakeIndex = Math.min(STAKES.length - 1, selectedStakeIndex + 1)
     // Redraw both cabinet and tickets to reflect stake-limit messages on empty ticket
     drawCabinet()
+    drawHeader() // refresh jackpot tier locks
     drawTicketsArea()
   })
   cabinetUI.addChild(minusBtn)
@@ -1661,8 +1669,9 @@ function drawCabinet() {
   const currentStakeLabel = STAKES[selectedStakeIndex] >= 1
     ? `£${STAKES[selectedStakeIndex].toFixed(2)}`
     : `${Math.round(STAKES[selectedStakeIndex] * 100)}p`
-  // Determine if Play is enabled (requires at least one confirmed ticket)
-  const playEnabled = tickets.some(t => t.confirmed)
+  // Determine if Play is enabled: allow when at least one ticket has picks
+  // (tickets are auto-confirmed at start of the round)
+  const playEnabled = tickets.some(t => t.animals.length > 0)
   // Draw a larger red circular background for the stake amount (Play button)
   const stakeBgRadius = 24
   const stakeBg = new Graphics()
@@ -1715,6 +1724,256 @@ function layoutAndDraw() {
   cabinetUI.zIndex = 50
   drawTicketsArea()
   drawCabinet()
+}
+
+// Debug/trigger function to award the current jackpot and reset it
+function triggerJackpotWin() {
+  // If no tickets with animals, create and confirm one synchronously (no animation)
+  const hasAnyTicketWithAnimals = tickets.some(t => t.animals.length > 0)
+  if (!hasAnyTicketWithAnimals) {
+    if (tickets.length === 0) {
+      tickets.push({ animals: [], confirmed: false, stake: undefined, win: 0 })
+    }
+    const t = tickets[0]
+    // Choose 3 unique random animals and confirm
+    const indices = [...Array(ANIMALS.length).keys()]
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp
+    }
+    t.animals = indices.slice(0, 3)
+    t.confirmed = true
+    t.stake = STAKES[selectedStakeIndex]
+    drawTicketsArea()
+    drawCabinet()
+  }
+  // Start an auto round and force 3 jackpot (bonus) symbols in random positions
+  (async () => {
+    await startAutoDrawWithForcedBonus(3)
+    // After round completes, award jackpot and show popup
+    const award = jackpotAmount
+    jackpotAmount = 0
+    if (award > 0) balance += award
+    drawHeader()
+    drawCabinet()
+    showJackpotPopup(award)
+  })()
+}
+
+// Helper: start auto draw but force N bonus flags at random positions
+async function startAutoDrawWithForcedBonus(n: number) {
+  if (autoDrawActive) return
+  // Safety: if none confirmed, startAutoDraw will auto-confirm non-empty tickets
+  // We call the normal start but intercept bonus flags
+  autoDrawActive = true
+  topDrawInitialized = false
+  revealCount = 0
+  topDrawBonusFlags = []
+  for (const t of tickets) t.win = 0
+  // Remove any empty tickets
+  for (let i = tickets.length - 1; i >= 0; i--) {
+    if (tickets[i].animals.length === 0) tickets.splice(i, 1)
+  }
+  // Auto-confirm non-empty
+  for (const t of tickets) {
+    if (!t.confirmed && t.animals.length > 0) {
+      t.confirmed = true
+      if (typeof t.stake !== 'number') t.stake = STAKES[selectedStakeIndex]
+    }
+  }
+  // Deduct stakes and add jackpot contributions
+  const totalStake = tickets.reduce((sum, t) => sum + ((t.confirmed && t.stake) ? t.stake : 0), 0)
+  if (totalStake > 0) {
+    balance -= totalStake
+    jackpotAmount += totalStake * JACKPOT_RATE
+  }
+  prizeAmount = 0
+  drawCabinet()
+  drawHeader()
+  // Fade animals grid by redrawing while autoDrawActive
+  drawAnimals()
+  ticketsScrollY = 0
+  animateTicketsTopLift(335)
+  topDrawResults = []
+  const picked = new Set<number>()
+  // Choose forced bonus positions
+  const positions = [0,1,2,3,4]
+  // shuffle
+  for (let i = positions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = positions[i]; positions[i] = positions[j]; positions[j] = tmp
+  }
+  const forced = new Set(positions.slice(0, Math.min(n, 5)))
+  for (let i = 0; i < 5; i++) {
+    let idx: number
+    do {
+      idx = Math.floor(Math.random() * ANIMALS.length)
+    } while (picked.has(idx))
+    picked.add(idx)
+    topDrawResults[i] = idx
+    const isBonus = forced.has(i)
+    topDrawBonusFlags[i] = isBonus
+    drawHeader()
+    fadeInTopBoxEmoji(i, idx, isBonus)
+    revealCount = i + 1
+    updateRunningWins()
+    prizeAmount = tickets.reduce((sum, t) => sum + (t.win || 0), 0)
+    drawCabinet()
+    await new Promise((res) => setTimeout(res, 800))
+  }
+  autoDrawActive = false
+  animateTicketsTopLift(0)
+  sortTicketsByCurrentWin()
+  tickets.splice(0, 0, { animals: [], confirmed: false, stake: undefined, win: 0 })
+  prizeAmount = tickets.reduce((sum, t) => sum + (t.win || 0), 0)
+  balance += prizeAmount
+  revealCount = 0
+  drawHeader()
+  drawAnimals()
+  drawTicketsArea()
+  drawCabinet()
+}
+
+// Golden themed Jackpot popup modal
+function showJackpotPopup(amount: number): Promise<void> {
+  return new Promise((resolve) => {
+    modalUI.removeChildren()
+    // Backdrop
+    const backdrop = new Graphics()
+    backdrop.beginFill(0x000000, 1)
+    backdrop.drawRect(0, 0, WIDTH, HEIGHT)
+    backdrop.endFill()
+    backdrop.alpha = 0
+    modalUI.addChild(backdrop)
+
+    // Panel
+    const panelW = Math.min(360, WIDTH - 30)
+    const panelH = 200
+    const panelX = (WIDTH - panelW) / 2
+    const panelY = (HEIGHT - panelH) / 2
+    const panel = new Graphics()
+    panel.beginFill(0x23272b)
+    panel.drawRoundedRect(panelX, panelY, panelW, panelH, 12)
+    panel.endFill()
+    // Golden border
+    panel.lineStyle(3, 0xffd54f, 0.95)
+    panel.drawRoundedRect(panelX, panelY, panelW, panelH, 12)
+    modalUI.addChild(panel)
+
+    const title = makeText('JACKPOT!', { fontSize: 26, fill: 0xffeb3b, fontWeight: 'bold' })
+    title.x = panelX + panelW / 2 - title.width / 2
+    title.y = panelY + 12
+    modalUI.addChild(title)
+
+    const amtText = makeText(`£${amount.toFixed(2)}`, { fontSize: 24, fill: 0xffffff })
+    amtText.x = panelX + panelW / 2 - amtText.width / 2
+    amtText.y = panelY + 88
+    modalUI.addChild(amtText)
+
+    const msg = makeText(amount > 0 ? 'Congratulations!' : 'Jackpot is empty.', { fontSize: 16, fill: 0xcccccc })
+    msg.x = panelX + panelW / 2 - msg.width / 2
+    msg.y = amtText.y + amtText.height + 8
+    modalUI.addChild(msg)
+
+    // Confetti layer (above panel content)
+    const confettiLayer = new Container()
+    modalUI.addChild(confettiLayer)
+    type Confetti = { g: Graphics, x: number, y: number, vx: number, vy: number, vr: number, size: number, life: number }
+    const confettiColors = [
+      0xf44336, 0xff9800, 0xffeb3b, 0x4caf50, 0x2196f3, 0x9c27b0, 0xffc107, 0x00bcd4,
+    ]
+    const particles: Confetti[] = []
+    const maxParticles = 120
+    const spawnPerSecond = 70
+    const gravity = 0.18
+    let created = 0
+    let acc = 0
+    const spawnOne = () => {
+      if (created >= maxParticles) return
+      const size = 3 + Math.random() * 4
+      const g = new Graphics()
+      g.beginFill(confettiColors[Math.floor(Math.random() * confettiColors.length)])
+      // Draw a tiny rectangle; rotation will make them flutter
+      g.drawRect(0, 0, size, size * (0.6 + Math.random() * 0.8))
+      g.endFill()
+      const x = Math.random() * WIDTH
+      const y = -10 - Math.random() * 40
+      const vx = -0.8 + Math.random() * 1.6
+      const vy = 0.5 + Math.random() * 1.2
+      const vr = (-0.1 + Math.random() * 0.2)
+      g.x = x; g.y = y
+      confettiLayer.addChild(g)
+      particles.push({ g, x, y, vx, vy, vr, size, life: 0 })
+      created++
+    }
+    const tickConfetti = (tkr: any) => {
+      const dt = (tkr && typeof tkr.deltaTime === 'number') ? tkr.deltaTime : 1
+      // spawn rate control
+      acc += dt
+      const toSpawn = Math.floor((acc / 60) * spawnPerSecond)
+      if (toSpawn > 0) {
+        acc -= toSpawn * (60 / spawnPerSecond)
+        for (let i = 0; i < toSpawn; i++) spawnOne()
+      }
+      // update particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i]
+        p.vy += gravity * (dt / 60)
+        p.x += p.vx * (dt / 60) * 60
+        p.y += p.vy * (dt / 60) * 60
+        p.g.rotation += p.vr * (dt / 60) * 60
+        p.g.x = p.x
+        p.g.y = p.y
+        p.life += dt
+        if (p.y > HEIGHT + 20) {
+          confettiLayer.removeChild(p.g)
+          p.g.destroy()
+          particles.splice(i, 1)
+        }
+      }
+      // Stop ticker when we've spawned all and all are gone
+      if (created >= maxParticles && particles.length === 0) {
+        app.ticker.remove(tickConfetti)
+      }
+    }
+    app.ticker.add(tickConfetti)
+
+    // Close button
+    const btnW = 120, btnH = 36
+    const btnX = panelX + panelW / 2 - btnW / 2
+    const btnY = panelY + panelH - btnH - 14
+    const closeBtn = new Graphics()
+    closeBtn.beginFill(0xc62828)
+    closeBtn.drawRoundedRect(btnX, btnY, btnW, btnH, 8)
+    closeBtn.endFill()
+    closeBtn.eventMode = 'static'
+    closeBtn.cursor = 'pointer'
+    closeBtn.on('pointertap', () => {
+      // Cleanup confetti ticker and nodes
+      app.ticker.remove(tickConfetti)
+      confettiLayer.removeChildren()
+      modalUI.removeChildren()
+      resolve()
+    })
+    modalUI.addChild(closeBtn)
+
+    const btnText = makeText('Close', { fontSize: 16, fill: 0xffffff })
+    btnText.x = btnX + btnW / 2 - btnText.width / 2
+    btnText.y = btnY + btnH / 2 - btnText.height / 2
+    modalUI.addChild(btnText)
+
+    // Fade-in backdrop
+    let elapsed = 0
+    const duration = 0.25
+    const tick = (tkr: any) => {
+      const dt = (tkr && typeof tkr.deltaTime === 'number') ? tkr.deltaTime : 1
+      elapsed += dt / 60
+      const t = Math.min(1, elapsed / duration)
+      backdrop.alpha = 0.0 + 0.6 * t
+      if (t >= 1) app.ticker.remove(tick)
+    }
+    app.ticker.add(tick)
+  })
 }
 
 // Scroll handling for tickets viewport (mouse wheel)
